@@ -1,4 +1,4 @@
-import { Fragment, Schema } from 'prosemirror-model'
+import { Fragment, Node, Schema } from 'prosemirror-model'
 import './style.css'
 import { EditorView } from 'prosemirror-view'
 import { EditorState } from 'prosemirror-state'
@@ -13,17 +13,19 @@ function shuffle<T>(a: T[]) {
   }
 }
 
-function nodesBetweenX(this: Fragment, from: number, to: number,
-  f: (node: Node, start: number, parent: Node | null, index: number) => boolean | void,
+function nodesBetweenUpdate(this: Node, from: number, to: number,
+  f: (node: Node, start: number, parent: Node | null, index: number) => boolean | Node | void,
   nodeStart = 0,
-  parent?: Node) {
+  parent?: Node,
+) {
+
   for (let i = 0, pos = 0; pos < to; i++) {
-    let child = this.content[i], end = pos + child.nodeSize
-    let maybeChild = f(child, nodeStart + pos, parent || null, i);
-    if (end > from && maybeChild !== false && child.content.size) {
-      child = maybeChild !== true ? maybeChild : child
+    let child = this.content.content[i], end = pos + child.nodeSize
+    let res = f(child, nodeStart + pos, parent || null, i);
+    if (end > from && res !== false && child.content.size) {
+      child = (res instanceof Node ? res : child);
       let start = pos + 1
-      child.nodesBetween(Math.max(0, from - start),
+      child.nodesBetweenUpdate(Math.max(0, from - start),
         Math.min(child.content.size, to - start),
         f, nodeStart + start)
     }
@@ -31,7 +33,16 @@ function nodesBetweenX(this: Fragment, from: number, to: number,
   }
 }
 
-Fragment.prototype.nodesBetweenX = nodesBetweenX;
+function descendantsUpdate(this: Node, f: (node: Node, pos: number, parent: Node | null, index: number) => void | boolean, root = true) {
+  if (root) {
+    let res = f(this, 0, null, 0);
+    this.content = (res instanceof Node ? res : this).content
+  }
+  this.nodesBetweenUpdate(0, this.content.size, f)
+}
+
+Node.prototype.nodesBetweenUpdate = nodesBetweenUpdate;
+Node.prototype.descendantsUpdate = descendantsUpdate;
 
 
 const schema = new Schema({
@@ -76,7 +87,7 @@ const VIEW = new EditorView(document.querySelector("#editor"), {
 
 const { tr } = VIEW.state
 
-tr.doc.content.nodesBetweenX(0, tr.doc.content.size, (node, pos, parent) => {
+tr.doc.descendantsUpdate((node, pos, parent) => {
   if (node.childCount <= 1) {
     return false
   }
@@ -90,10 +101,11 @@ tr.doc.content.nodesBetweenX(0, tr.doc.content.size, (node, pos, parent) => {
   let content = node.content
 
   indexMap.forEach((i, ii) => { content = content.replaceChild(ii, node.content.child(i)) })
-  const x = node.copy(content)
-  tr.replaceWith(pos, pos + node.nodeSize, x)
 
-  return x
+  const newNode = node.copy(content)
+  tr.replaceWith(pos, pos + node.content.size, newNode)
+
+  return newNode
 })
 
 VIEW.dispatch(tr)
